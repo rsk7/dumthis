@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Drum Machine</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Drum Machine</h1>
+        <nav class="tabs" role="tablist">
+          <button role="tab" id="tab-extract" aria-controls="view-extract" aria-selected="true">Extract from a song</button>
+          <button role="tab" id="tab-play" aria-controls="view-play" aria-selected="false">Play &amp; loop</button>
+        </nav>
+      </header>
+
+      <div id="view-extract" role="tabpanel" aria-labelledby="tab-extract">
+      <p class="muted">Drop in a song to pull out a kick, snare and hi-hat pattern. This version uses band-split onset detection only, so a busy mix will fool it.</p>
+
+      <section id="drop" class="drop">
+        <input type="file" id="file" accept="audio/*" hidden />
+        <p>Drop an audio file here or <button id="pick" class="link">choose one</button></p>
+        <p id="captureIntro">
+          or <button id="capture" class="link">record another tab</button> (YouTube, SoundCloud, …)
+        </p>
+        <div id="capturePanel" class="capture" hidden>
+          <p class="small muted">
+            Play the part of the song you want in the shared tab. 30–60 seconds of steady drums is enough.
+          </p>
+          <div class="inline center">
+            <span class="rec-dot"></span>
+            <span id="captureTime" class="mono">0:00</span>
+            <button id="captureStop" class="primary">Stop &amp; analyze</button>
+            <button id="captureCancel">Cancel</button>
+          </div>
+        </div>
+        <p id="status" class="muted status" role="status"></p>
+      </section>
+
+      <section id="results" hidden>
+        <div class="panel controls">
+          <div class="field">
+            <label for="bpm">Tempo</label>
+            <div class="inline">
+              <input id="bpm" type="number" step="0.1" min="40" max="240" />
+              <button id="half" title="Halve tempo">÷2</button>
+              <button id="double" title="Double tempo">×2</button>
+              <button id="autoBpm">Auto</button>
+            </div>
+            <span id="bpmMode" class="muted small"></span>
+          </div>
+          <div class="field">
+            <label>Bar start</label>
+            <div class="inline">
+              <button id="shiftLeft" title="Start bars one beat earlier">◀</button>
+              <span id="barStart" class="mono"></span>
+              <button id="shiftRight" title="Start bars one beat later">▶</button>
+            </div>
+            <span id="barCount" class="muted small"></span>
+          </div>
+          <div class="field sliders">
+            <label>Sensitivity</label>
+            <div class="slider"><span class="dot kick"></span>Kick<input id="sens-kick" type="range" min="0" max="100" /></div>
+            <div class="slider"><span class="dot snare"></span>Snare<input id="sens-snare" type="range" min="0" max="100" /></div>
+            <div class="slider"><span class="dot hat"></span>Hi-hat<input id="sens-hat" type="range" min="0" max="100" /></div>
+          </div>
+          <div class="field">
+            <label for="consensus">Pattern threshold</label>
+            <input id="consensus" type="range" min="10" max="90" />
+            <span id="consensusValue" class="muted small"></span>
+          </div>
+        </div>
+
+        <div class="panel transport">
+          <button id="playSong" class="primary">▶ Play with song</button>
+          <button id="playLoop" class="primary">▶ Loop pattern</button>
+          <button id="stop">■ Stop</button>
+          <label class="vol">Song <input id="songVol" type="range" min="0" max="100" value="70" /></label>
+          <label class="vol">Drums <input id="drumVol" type="range" min="0" max="100" value="80" /></label>
+        </div>
+
+        <h2>Transcription</h2>
+        <p class="muted small">Every column is a 16th note, every block a bar. Click a bar to load it into the editor; “Play with song” starts from the selected bar.</p>
+        <div id="timelineWrap" class="timeline">
+          <canvas id="timeline"></canvas>
+          <div id="playhead" class="playhead" hidden></div>
+        </div>
+
+        <div class="pattern-head">
+          <h2>Pattern <span id="patternSource" class="muted"></span></h2>
+          <button id="useConsensus">Use consensus</button>
+          <button id="toLooper">Open in looper →</button>
+        </div>
+        <div id="grid" class="grid"></div>
+      </section>
+      </div>
+
+      <div id="view-play" role="tabpanel" aria-labelledby="tab-play" hidden>
+        <p class="muted">Play the pads with your keyboard or mouse. Press <kbd>R</kbd> to record a loop, and keep playing to layer more parts on top.</p>
+
+        <div class="panel controls">
+          <div class="field">
+            <label for="loopBpm">Tempo</label>
+            <input id="loopBpm" type="number" min="40" max="240" step="1" />
+          </div>
+          <div class="field">
+            <label for="loopBars">Loop length</label>
+            <select id="loopBars">
+              <option value="1">1 bar</option>
+              <option value="2" selected>2 bars</option>
+              <option value="4">4 bars</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="loopQuantize">Quantize</label>
+            <select id="loopQuantize">
+              <option value="0">Off</option>
+              <option value="8">1/8 notes</option>
+              <option value="16" selected>1/16 notes</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Click</label>
+            <label class="check"><input type="checkbox" id="metronome" checked /> Metronome</label>
+            <label class="check"><input type="checkbox" id="countIn" checked /> 1-bar count-in</label>
+          </div>
+        </div>
+
+        <div class="panel transport">
+          <button id="loopRec" class="rec"></button>
+          <button id="loopPlay" class="primary"></button>
+          <button id="loopUndo">Undo layer <kbd>⌫</kbd></button>
+          <button id="loopClear">Clear</button>
+          <span id="loopState" class="muted small"></span>
+        </div>
+
+        <div class="panel loop-view"><canvas id="loopView"></canvas></div>
+
+        <h2>Drums</h2>
+        <div id="pads" class="pads"></div>
+        <h2>Bass</h2>
+        <div id="bassKeys" class="pads bass-keys"></div>
+      </div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
