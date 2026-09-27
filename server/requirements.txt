@@ -1,0 +1,17 @@
+# Local analysis server. Install with: npm run server:setup
+fastapi==0.141.1
+starlette==1.7.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+soundfile==0.14.0
+certifi==2026.7.22
+numpy==2.5.3
+torch==2.14.0
+torchaudio==2.11.0
+librosa==1.0.0
+demucs==4.1.0
+beat-this==1.1.0
+# PyTorch port of ADTOF (Zehren et al.); pinned to a commit.
+adtof-pytorch @ git+https://github.com/xavriley/ADTOF-pytorch@85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9
+# Only for server/eval.py
+mir_eval==0.8.2

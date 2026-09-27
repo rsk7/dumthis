@@ -1,12 +1,12 @@
 import { biquad } from '../src/analysis/dsp';
-import type { Instrument } from '../src/analysis/types';
+import type { BandInstrument } from '../src/analysis/features';
 
 export interface SynthOptions {
   bpm: number;
   bars: number;
   /** Silence before the first downbeat, seconds. */
   lead: number;
-  pattern: Record<Instrument, number[]>;
+  pattern: Record<BandInstrument, number[]>;
   /** Adds a sustained bass line that changes note on every beat. */
   bass?: boolean;
   sampleRate?: number;
@@ -49,10 +49,10 @@ export function synthLoop(opts: SynthOptions): Float32Array {
       out[start + n] += 0.3 * Math.exp(-n / sr / 0.02) * hatNoise[n];
     }
   };
-  const voices: Record<Instrument, (start: number) => void> = { kick: addKick, snare: addSnare, hat: addHat };
+  const voices: Record<BandInstrument, (start: number) => void> = { kick: addKick, snare: addSnare, hat: addHat };
 
   for (let bar = 0; bar < opts.bars; bar++) {
-    for (const inst of Object.keys(voices) as Instrument[]) {
+    for (const inst of Object.keys(voices) as BandInstrument[]) {
       for (const step of opts.pattern[inst]) {
         voices[inst](Math.round((opts.lead + (bar * 16 + step) * stepDur) * sr));
       }

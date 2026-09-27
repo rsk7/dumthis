@@ -16,7 +16,26 @@
       </header>
 
       <div id="view-extract" role="tabpanel" aria-labelledby="tab-extract">
-      <p class="muted">Drop in a song to pull out a kick, snare and hi-hat pattern. This version uses band-split onset detection only, so a busy mix will fool it.</p>
+      <p class="muted">Drop in a song to pull out its drum pattern.</p>
+
+      <fieldset class="panel engine">
+        <legend>Analysis engine</legend>
+        <label class="engine-option">
+          <input type="radio" name="engine" value="server" />
+          <span>
+            <strong>Local server</strong>: separates the drums with Demucs, then detects kick, snare, hi-hat, toms and
+            cymbals with ADTOF. Accurate; takes 10–60 s per song.
+            <span id="serverStatus" class="server-status small"></span>
+          </span>
+        </label>
+        <label class="engine-option">
+          <input type="radio" name="engine" value="browser" />
+          <span>
+            <strong>In the browser</strong>: instant, no setup, but rough. Kick, snare and hi-hat only, and bass or guitars
+            are often mistaken for drums.
+          </span>
+        </label>
+      </fieldset>
 
       <section id="drop" class="drop">
         <input type="file" id="file" accept="audio/*" hidden />
@@ -44,6 +63,7 @@
           </div>
         </div>
         <p id="status" class="muted status" role="status"></p>
+        <progress id="progress" max="1" hidden></progress>
       </section>
 
       <section id="results" hidden>
@@ -69,9 +89,7 @@
           </div>
           <div class="field sliders">
             <label>Sensitivity</label>
-            <div class="slider"><span class="dot kick"></span>Kick<input id="sens-kick" type="range" min="0" max="100" /></div>
-            <div class="slider"><span class="dot snare"></span>Snare<input id="sens-snare" type="range" min="0" max="100" /></div>
-            <div class="slider"><span class="dot hat"></span>Hi-hat<input id="sens-hat" type="range" min="0" max="100" /></div>
+            <div id="sensSliders"></div>
           </div>
           <div class="field">
             <label for="consensus">Pattern threshold</label>
@@ -84,6 +102,13 @@
           <button id="playSong" class="primary">▶ Play with song</button>
           <button id="playLoop" class="primary">▶ Loop pattern</button>
           <button id="stop">■ Stop</button>
+          <label class="vol" id="backingWrap" hidden>
+            Play along with
+            <select id="backing">
+              <option value="mix">Full song</option>
+              <option value="drums">Drums only</option>
+            </select>
+          </label>
           <label class="vol">Song <input id="songVol" type="range" min="0" max="100" value="70" /></label>
           <label class="vol">Drums <input id="drumVol" type="range" min="0" max="100" value="80" /></label>
         </div>

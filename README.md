@@ -2,12 +2,15 @@
 
 **Live demo: https://rsk7.github.io/dumthis/** (desktop Chrome or Edge recommended)
 
-Two tabs, both running entirely in the browser:
+Two tabs:
 
-- **Extract from a song**: drop in a song (or record a browser tab) and get a kick / snare / hi-hat pattern you can loop and edit.
+- **Extract from a song**: drop in a song (or record a browser tab) and get its drum pattern, which you can loop and edit.
 - **Play & loop**: play drum pads and bass from the keyboard and build up a loop in layers.
 
-This is the band-split prototype: no machine learning, no stem separation.
+Drum extraction has two engines:
+
+- **Local server** (recommended): Demucs separates the drums, ADTOF detects kick, snare, hi-hat, toms and cymbals, and beat-this finds beats and downbeats. It runs on your machine; see [Local analysis server](#local-analysis-server).
+- **In the browser**: instant with no setup, but rough. It splits the mix into frequency bands and detects kick, snare and hi-hat only.
 
 ## Run
 
@@ -43,7 +46,42 @@ Keys are matched by physical position (`KeyboardEvent.code`), so they work on no
 
 All sounds are synthesized with Tone.js (`src/engine.ts`); there are no sample files. Looper logic is in `src/looper.ts` and the pads/loop view in `src/play.ts`.
 
-## How it works (`src/analysis/`)
+## Local analysis server
+
+Needs Python 3.12 and `ffmpeg` (`brew install ffmpeg`). About 2 GB of disk for PyTorch and the models.
+
+```bash
+npm run server:setup   # once: creates server/.venv and installs the models' dependencies
+npm run server         # listens on http://127.0.0.1:8765
+```
+
+Then choose **Local server** as the analysis engine, either in `npm run dev` or on the live demo. The first run downloads the Demucs and beat-this models (about 160 MB). After that, a 3-minute song takes roughly 15–30 s on an M2 Pro (Demucs runs on the Apple GPU).
+
+- The server only listens on `127.0.0.1` and accepts requests from `localhost` and `rsk7.github.io`. When the live demo first talks to it, Chrome may ask to allow access to devices on your local network; allow it.
+- Results are cached by file hash in `server/.cache/results`, so re-opening a song is instant.
+- **Play along with → Drums only** plays the separated drum track, which is handy for hearing what the model heard.
+- Sensitivity sliders set a confidence threshold for each instrument; 50 is the model's default. Toms start stricter because the model over-reports them.
+- ÷2 / ×2 halve or double the beat grid from the beat tracker.
+
+### Accuracy
+
+`npm run eval` scores detection against [MDB Drums](https://github.com/CarlSouthall/MDBDrums), real recordings with hand-labelled hits. The dataset is CC BY-NC-SA and not included; the download loop is in the header of `server/eval.py`. Results on the 15 non-jazz tracks (onset F-measure, ±50 ms):
+
+| | kick | snare | hi-hat | toms | cymbals |
+| --- | --- | --- | --- | --- | --- |
+| **Server (ADTOF on the Demucs drum track)** | **0.97** | **0.92** | **0.93** | 0.43 | **0.83** |
+| ADTOF on the full mix | 0.97 | 0.90 | 0.91 | 0.28 | 0.79 |
+| In-browser band split | 0.50 | 0.37 | 0.79 | — | — |
+
+Toms are the weak spot: most detected toms are false.
+
+### Credits
+
+- [Demucs](https://github.com/adefossez/demucs) (MIT) by Alexandre Défossez
+- [beat-this](https://github.com/CPJKU/beat_this) (MIT) by CP JKU
+- [ADTOF](https://github.com/MZehren/ADTOF) by Zehren et al. (CC BY-NC-SA 4.0, so **non-commercial use only**), via the [PyTorch port](https://github.com/xavriley/ADTOF-pytorch) by Xavier Riley (no license file). Both are installed as dependencies, not included in this repo. Anything commercial needs a different drum transcription model.
+
+## How the in-browser engine works (`src/analysis/`)
 
 1. **Band split** (`features.ts`, `dsp.ts`): mono mix → biquad filters. Kick < 110 Hz, snare 1–5 kHz, hi-hat > 7 kHz.
 2. **Onset detection**: per band, the positive slope of log-compressed energy (~5.8 ms frames), then Dixon-style peak picking (`peaks.ts`). The sensitivity sliders control the peak threshold.
@@ -51,10 +89,11 @@ All sounds are synthesized with Tone.js (`src/engine.ts`); there are no sample f
 4. **Grid + bars** (`transcribe.ts`): each beat is split into 16ths and onsets snap to the nearest step. Weak hits that land on the same step as a strong hit in a neighboring band are dropped as bleed. The downbeat comes from the backbeat (snare on 2 and 4) and from which beat has more kick; ties go to the first beat.
 5. **Consensus pattern**: a step is kept if it is hit in at least N% of the bars that contain drums.
 
+Steps 4–5 (`arrange()` in `transcribe.ts`) are shared with the server engine. With server results, bar starts come from the model's downbeats and there is no bleed suppression.
+
 ## Known limits
 
-- Bass guitar and synth bass land in the kick band and cause false kicks. Stem separation (Demucs) fixes this.
-- The tempo can come out at half or double speed. Use the ÷2 and ×2 buttons.
-- The first bar can start on the wrong beat. Use the ◀ ▶ buttons.
+- In-browser engine: bass guitar and synth bass land in the kick band and cause false kicks; guitars and vocals cause false snares. Use the server engine.
+- Tempo can come out at half or double speed. Use ÷2 and ×2.
+- The first bar can start on the wrong beat. Use ◀ ▶.
 - Only 4/4 and 16th-note grids are handled. Triplet and swing feels get squashed onto straight 16ths.
-- Toms, crashes and rides are not detected. Crashes usually show up as hi-hat.

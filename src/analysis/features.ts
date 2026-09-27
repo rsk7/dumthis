@@ -1,5 +1,8 @@
 import { energyEnvelope, filterChain, normalizeByStd, onsetFunction, type FilterStage } from './dsp';
-import { INSTRUMENTS, type PerInstrument } from './types';
+/** Instruments the band-split detector can find. */
+export const BAND_INSTRUMENTS = ['kick', 'snare', 'hat'] as const;
+export type BandInstrument = (typeof BAND_INSTRUMENTS)[number];
+type PerBand<T> = Record<BandInstrument, T>;
 
 /** ~5.8 ms per frame. */
 const TARGET_FPS = 172;
@@ -8,7 +11,7 @@ const TARGET_FPS = 172;
  * Frequency bands used to separate drums in the full mix. Each stage is a 12 dB/oct
  * biquad, so doubled stages give 24 dB/oct slopes.
  */
-export const BAND_FILTERS: PerInstrument<FilterStage[]> = {
+export const BAND_FILTERS: PerBand<FilterStage[]> = {
   kick: [
     { type: 'lowpass', freq: 110 },
     { type: 'lowpass', freq: 110 },
@@ -30,13 +33,13 @@ export interface Features {
   fps: number;
   duration: number;
   /** Per-band onset detection functions, unit std. */
-  odf: PerInstrument<Float32Array>;
+  odf: PerBand<Float32Array>;
   /** Combined onset strength used for tempo and beat tracking, unit std. */
   combined: Float32Array;
 }
 
 export interface FeatureOptions {
-  bands?: PerInstrument<FilterStage[]>;
+  bands?: PerBand<FilterStage[]>;
   /** Log compression gain relative to the band's peak energy. */
   compression?: number;
 }
@@ -45,8 +48,8 @@ export function computeFeatures(mono: Float32Array, sampleRate: number, opts: Fe
   const { bands = BAND_FILTERS, compression = 100 } = opts;
   const hop = Math.round(sampleRate / TARGET_FPS);
   const fps = sampleRate / hop;
-  const odf = {} as PerInstrument<Float32Array>;
-  for (const inst of INSTRUMENTS) {
+  const odf = {} as PerBand<Float32Array>;
+  for (const inst of BAND_INSTRUMENTS) {
     const band = filterChain(mono, sampleRate, bands[inst]);
     odf[inst] = normalizeByStd(onsetFunction(energyEnvelope(band, hop), compression));
   }

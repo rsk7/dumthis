@@ -531,3 +531,82 @@ button.primary kbd {
     min-height: 64px;
   }
 }
+
+/* ---------- Analysis engine ---------- */
+
+.engine {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 0;
+}
+
+.engine legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.engine-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.engine-option input {
+  margin-top: 4px;
+  accent-color: var(--accent);
+}
+
+.server-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.server-status .ok {
+  color: var(--crash);
+  font-weight: 600;
+}
+
+.server-status .off {
+  color: var(--kick);
+  font-weight: 600;
+}
+
+.server-status code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--cell-off);
+  color: var(--text);
+}
+
+.server-status button {
+  font-size: 12px;
+  padding: 1px 8px;
+}
+
+#sensSliders {
+  display: grid;
+  gap: 6px;
+}
+
+.slider {
+  grid-template-columns: 12px 64px 1fr;
+}
+
+progress {
+  width: min(320px, 100%);
+  height: 6px;
+  accent-color: var(--accent);
+}

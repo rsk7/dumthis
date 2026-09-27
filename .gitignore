@@ -1,2 +1,5 @@
 node_modules
 dist
+server/.venv
+server/.cache
+__pycache__

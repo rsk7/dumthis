@@ -1,13 +1,29 @@
 import * as Tone from 'tone';
 import './style.css';
 import { computeFeatures, type Features } from './analysis/features';
-import { DEFAULT_SETTINGS, transcribe, type Settings, type Transcription } from './analysis/transcribe';
-import { INSTRUMENTS, STEPS_PER_BAR, clonePattern, emptyPattern, type Instrument, type Pattern } from './analysis/types';
+import {
+  DEFAULT_SETTINGS,
+  arrange,
+  detectInBrowser,
+  detectionFromServer,
+  type Settings,
+  type Transcription,
+} from './analysis/transcribe';
+import {
+  INSTRUMENTS,
+  INSTRUMENT_LABELS,
+  STEPS_PER_BAR,
+  clonePattern,
+  emptyPattern,
+  type Instrument,
+  type Pattern,
+} from './analysis/types';
 import { nearestIndex } from './analysis/util';
 import { TabCapture } from './capture';
 import { Engine } from './engine';
 import { Looper } from './looper';
 import { setupPlayView } from './play';
+import { STAGE_LABELS, analyzeOnServer, checkServer, fetchDrumStem, type ServerResult } from './server';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -23,6 +39,12 @@ const els = {
   captureStop: $<HTMLButtonElement>('captureStop'),
   captureCancel: $<HTMLButtonElement>('captureCancel'),
   status: $('status'),
+  progress: $<HTMLProgressElement>('progress'),
+  engineInputs: document.querySelectorAll<HTMLInputElement>('input[name="engine"]'),
+  serverStatus: $('serverStatus'),
+  sensSliders: $('sensSliders'),
+  backingWrap: $('backingWrap'),
+  backing: $<HTMLSelectElement>('backing'),
   results: $('results'),
   bpm: $<HTMLInputElement>('bpm'),
   bpmMode: $('bpmMode'),
@@ -53,14 +75,24 @@ const els = {
   grid: $('grid'),
 };
 
-const INSTRUMENT_LABELS: Record<Instrument, string> = { kick: 'Kick', snare: 'Snare', hat: 'Hi-hat' };
 const NEW_HIT_VELOCITY = 0.8;
 
 const engine = new Engine();
 const looper = new Looper(engine);
 const playView = setupPlayView(engine, looper);
 const settings: Settings = structuredClone(DEFAULT_SETTINGS);
-let features: Features | null = null;
+
+type AnalysisEngine = 'server' | 'browser';
+/** What the current transcription was computed from. */
+type Source = { kind: 'browser'; features: Features } | { kind: 'server'; result: ServerResult };
+
+let analysisEngine: AnalysisEngine = 'browser';
+let serverDevice: string | null = null;
+let source: Source | null = null;
+let lastInput: { name: string; blob: Blob } | null = null;
+let songBuffers: { mix: AudioBuffer; drums: AudioBuffer | null } | null = null;
+/** Increments per load, so a slow analysis that finishes late doesn't overwrite a newer one. */
+let loadToken = 0;
 let tx: Transcription | null = null;
 let editor: Pattern = emptyPattern();
 let selectedBar: number | null = null;
@@ -89,8 +121,10 @@ async function loadFile(file: File): Promise<void> {
   await loadAudio(file.name, file);
 }
 
-/** Decodes any audio blob the browser understands and runs the analysis on it. */
+/** Decodes the audio for playback, then analyzes it with the selected engine. */
 async function loadAudio(name: string, blob: Blob): Promise<void> {
+  const token = ++loadToken;
+  lastInput = { name, blob };
   engine.stop();
   setStatus(`Decoding ${name}…`);
   try {
@@ -100,22 +134,102 @@ async function loadAudio(name: string, blob: Blob): Promise<void> {
       setStatus(`${name} is silent. If you recorded a tab, make sure it was playing and “Also share tab audio” was on.`);
       return;
     }
-    setStatus('Analyzing…');
-    await nextFrame();
     const t0 = performance.now();
-    features = computeFeatures(mono, buffer.sampleRate);
+    let next: Source;
+    let drums: AudioBuffer | null = null;
+    if (analysisEngine === 'server') {
+      const result = await analyzeOnServer(blob, fileNameFor(name, blob), (stage, progress) => {
+        if (token === loadToken) setProgress(`${STAGE_LABELS[stage] ?? stage}…`, progress);
+      });
+      if (token !== loadToken) return;
+      setProgress('Downloading the separated drums…', 1);
+      drums = await Tone.getContext().decodeAudioData(await fetchDrumStem(result));
+      next = { kind: 'server', result };
+    } else {
+      setStatus('Analyzing…');
+      await nextFrame();
+      next = { kind: 'browser', features: computeFeatures(mono, buffer.sampleRate) };
+    }
+    if (token !== loadToken) return;
+
+    source = next;
+    songBuffers = { mix: buffer, drums };
+    els.backing.value = 'mix';
+    els.backingWrap.hidden = !drums;
     engine.loadSong(buffer);
     settings.bpm = null;
+    settings.beatScale = 1;
     settings.downbeatShift = 0;
     selectedBar = null;
+    renderSliders();
     retranscribe();
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    setStatus(`${name} · ${formatTime(buffer.duration)} · analyzed in ${secs}s`);
+    const how = next.kind === 'server' ? `local server (${next.result.device})` : 'in the browser';
+    setStatus(`${name} · ${formatTime(buffer.duration)} · analyzed ${how} in ${secs}s`);
     els.results.hidden = false;
   } catch (err) {
-    setStatus(`Could not read ${name}: ${errorMessage(err)}`);
+    if (token === loadToken) setStatus(`Could not analyze ${name}: ${errorMessage(err)}`);
   }
 }
+
+/** The server needs a file extension to know the format; tab recordings are unnamed blobs. */
+function fileNameFor(name: string, blob: Blob): string {
+  if (/\.\w{2,5}$/.test(name)) return name;
+  return `${name.replace(/\W+/g, '-')}.${blob.type.includes('webm') ? 'webm' : 'audio'}`;
+}
+
+// ---------- Analysis engine ----------
+
+const ENGINE_KEY = 'dumthis.engine';
+
+function savedEngine(): AnalysisEngine | null {
+  try {
+    const v = localStorage.getItem(ENGINE_KEY);
+    return v === 'server' || v === 'browser' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+for (const input of els.engineInputs) {
+  input.addEventListener('change', () => {
+    if (!input.checked) return;
+    analysisEngine = input.value as AnalysisEngine;
+    try {
+      localStorage.setItem(ENGINE_KEY, analysisEngine);
+    } catch {
+      // Storage unavailable (private mode); the choice just isn't remembered.
+    }
+    if (analysisEngine === 'server') void refreshServerStatus();
+    if (lastInput) void loadAudio(lastInput.name, lastInput.blob);
+  });
+}
+
+async function refreshServerStatus(): Promise<void> {
+  els.serverStatus.textContent = 'Checking for the server…';
+  serverDevice = await checkServer();
+  const deviceLabel: Record<string, string> = { mps: 'Apple GPU', cuda: 'NVIDIA GPU', cpu: 'CPU' };
+  if (serverDevice) {
+    els.serverStatus.innerHTML = `<span class="ok">● Running</span> on ${deviceLabel[serverDevice] ?? serverDevice}`;
+  } else {
+    els.serverStatus.innerHTML =
+      '<span class="off">● Not running.</span> Start it with <code>npm run server</code> (setup in the README).' +
+      ' <button type="button" id="recheckServer">Check again</button>';
+    document.getElementById('recheckServer')?.addEventListener('click', () => void refreshServerStatus());
+  }
+}
+
+async function initEngine(): Promise<void> {
+  // On the public demo, probing localhost makes Chrome ask every visitor for local network
+  // access, so only probe up front on a dev server or once the user has chosen the server.
+  const saved = savedEngine();
+  const isLocalPage = ['localhost', '127.0.0.1'].includes(location.hostname);
+  if (saved === 'server' || isLocalPage) await refreshServerStatus();
+  else els.serverStatus.textContent = 'Select to check whether it’s running.';
+  analysisEngine = saved ?? (serverDevice ? 'server' : 'browser');
+  for (const input of els.engineInputs) input.checked = input.value === analysisEngine;
+}
+void initEngine();
 
 function peak(x: Float32Array): number {
   let max = 0;
@@ -193,9 +307,11 @@ function toMono(buffer: AudioBuffer): Float32Array {
 // ---------- Analysis ----------
 
 function retranscribe(): void {
-  if (!features) return;
+  if (!source) return;
   if (engine.mode === 'song') engine.stop();
-  tx = transcribe(features, settings);
+  const detection =
+    source.kind === 'server' ? detectionFromServer(source.result, settings) : detectInBrowser(source.features, settings);
+  tx = arrange(detection, settings);
   if (selectedBar !== null && selectedBar >= tx.bars.length) selectedBar = null;
   loadEditor();
   if (engine.mode === 'loop') engine.setBpm(tx.bpm);
@@ -219,14 +335,36 @@ function loadEditor(): void {
 
 // ---------- Controls ----------
 
-for (const inst of INSTRUMENTS) {
-  const input = $<HTMLInputElement>(`sens-${inst}`);
-  input.value = String(settings.sensitivity[inst]);
-  input.addEventListener('input', () => {
-    settings.sensitivity[inst] = Number(input.value);
-    retranscribeSoon();
-  });
+/** One sensitivity slider per instrument the current engine can detect. */
+function renderSliders(): void {
+  const instruments = source?.kind === 'server' ? INSTRUMENTS : (['kick', 'snare', 'hat'] as const);
+  els.sensSliders.replaceChildren(
+    ...instruments.map((inst) => {
+      const row = document.createElement('label');
+      row.className = 'slider';
+      row.innerHTML = `<span class="dot ${inst}"></span>${INSTRUMENT_LABELS[inst]}`;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = '0';
+      input.max = '100';
+      input.value = String(settings.sensitivity[inst]);
+      input.setAttribute('aria-label', `${INSTRUMENT_LABELS[inst]} sensitivity`);
+      input.addEventListener('input', () => {
+        settings.sensitivity[inst] = Number(input.value);
+        retranscribeSoon();
+      });
+      row.append(input);
+      return row;
+    }),
+  );
 }
+
+els.backing.addEventListener('change', () => {
+  if (!songBuffers) return;
+  const buffer = els.backing.value === 'drums' && songBuffers.drums ? songBuffers.drums : songBuffers.mix;
+  engine.loadSong(buffer);
+  renderTransport();
+});
 
 els.consensus.value = String(settings.consensusThreshold * 100);
 els.consensus.addEventListener('input', () => {
@@ -235,18 +373,31 @@ els.consensus.addEventListener('input', () => {
 });
 
 els.bpm.addEventListener('change', () => {
+  if (source?.kind === 'server') return;
   const v = Number(els.bpm.value);
   if (v >= 40 && v <= 240) {
     settings.bpm = v;
     retranscribe();
   }
 });
-els.half.addEventListener('click', () => setBpm(tx && tx.bpm / 2));
-els.double.addEventListener('click', () => setBpm(tx && tx.bpm * 2));
+els.half.addEventListener('click', () => scaleTempo(0.5));
+els.double.addEventListener('click', () => scaleTempo(2));
 els.autoBpm.addEventListener('click', () => {
   settings.bpm = null;
+  settings.beatScale = 1;
   retranscribe();
 });
+
+/** Server beats are rescaled in place; the in-browser tracker re-runs at the new tempo. */
+function scaleTempo(factor: number): void {
+  if (!tx) return;
+  if (source?.kind === 'server') {
+    settings.beatScale = Math.min(2, Math.max(0.5, settings.beatScale * factor));
+    retranscribe();
+  } else {
+    setBpm(tx.bpm * factor);
+  }
+}
 
 function setBpm(bpm: number | null): void {
   if (!bpm) return;
@@ -344,7 +495,16 @@ document.addEventListener('keydown', (e) => {
 function renderInfo(): void {
   if (!tx) return;
   if (document.activeElement !== els.bpm) els.bpm.value = tx.bpm.toFixed(1);
-  els.bpmMode.textContent = settings.bpm === null ? 'estimated from the audio' : 'set by you';
+  const fromServer = source?.kind === 'server';
+  els.bpm.readOnly = fromServer;
+  els.bpm.title = fromServer ? 'Beats come from the server; use ÷2 / ×2 to change the tempo level' : '';
+  els.bpmMode.textContent = fromServer
+    ? settings.beatScale === 1
+      ? 'from the beat tracker'
+      : `beat tracker × ${settings.beatScale}`
+    : settings.bpm === null
+      ? 'estimated from the audio'
+      : 'set by you';
   const first = tx.bars[0];
   els.barStart.textContent = first ? formatTime(first.startTime, true) : '—';
   els.barCount.textContent = `${tx.bars.length} bars, ${tx.beatTimes.length} beats`;
@@ -469,6 +629,13 @@ function errorMessage(err: unknown): string {
 
 function setStatus(text: string): void {
   els.status.textContent = text;
+  els.progress.hidden = true;
+}
+
+function setProgress(text: string, fraction: number): void {
+  els.status.textContent = `${text} ${Math.round(fraction * 100)}%`;
+  els.progress.hidden = false;
+  els.progress.value = fraction;
 }
 
 function nextFrame(): Promise<void> {

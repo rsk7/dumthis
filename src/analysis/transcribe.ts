@@ -1,4 +1,4 @@
-import type { Features } from './features';
+import { BAND_INSTRUMENTS, type Features } from './features';
 import { pickPeaks, type Onset } from './peaks';
 import { estimatePeriod, trackBeats } from './tempo';
 import {
@@ -7,6 +7,7 @@ import {
   STEPS_PER_BAR,
   STEPS_PER_BEAT,
   emptyPattern,
+  perInstrument,
   type Instrument,
   type Pattern,
   type PerInstrument,
@@ -14,19 +15,22 @@ import {
 import { clamp, median, mod, nearestIndex, quantile } from './util';
 
 export interface Settings {
-  /** 0..100 per band; higher picks up quieter hits. */
+  /** 0..100 per instrument; higher picks up quieter / less certain hits. */
   sensitivity: PerInstrument<number>;
-  /** Manual tempo override; null lets the tracker estimate it. */
+  /** Manual tempo override for the in-browser tracker; null lets it estimate. */
   bpm: number | null;
-  /** Beats to shift the automatically detected bar start by. */
+  /** Server results only: 2 doubles the beat grid, 0.5 halves it. */
+  beatScale: number;
+  /** Beats to shift the detected bar start by. */
   downbeatShift: number;
   /** Fraction of bars a step must be hit in to make it into the consensus pattern. */
   consensusThreshold: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  sensitivity: { kick: 50, snare: 50, hat: 50 },
+  sensitivity: perInstrument(() => 50),
   bpm: null,
+  beatScale: 1,
   downbeatShift: 0,
   consensusThreshold: 0.4,
 };
@@ -53,32 +57,86 @@ export interface Transcription {
   consensus: Pattern;
 }
 
+/** Hits and beats from either detector, before they are put on a grid. */
+export interface Detection {
+  onsets: PerInstrument<Onset[]>;
+  beatTimes: number[];
+  /** Known downbeats (from the server's beat tracker); otherwise guessed from the drums. */
+  downbeatTimes?: number[];
+  /** Drop weak hits that coincide with strong ones in a neighboring band (band-split bleed). */
+  suppressBleed: boolean;
+}
+
+/** Hits as returned by the local server: [time in seconds, model confidence 0..1]. */
+export interface ServerHits {
+  beats: number[];
+  downbeats: number[];
+  hits: PerInstrument<[number, number][]>;
+}
+
 export function sensitivityToDelta(sensitivity: number): number {
   return 0.3 + (1 - clamp(sensitivity, 0, 100) / 100) * 3;
 }
 
-export function transcribe(features: Features, settings: Settings): Transcription {
+/**
+ * ADTOF's published per-class thresholds, except toms: the model over-reports them
+ * (precision 0.32 on MDB Drums at 0.32), so they start stricter.
+ */
+export const SERVER_THRESHOLDS: PerInstrument<number> = { kick: 0.22, snare: 0.24, hat: 0.22, tomlow: 0.5, crash: 0.3 };
+const SERVER_CONFIDENCE_FLOOR = 0.08;
+
+/** Sensitivity 50 = default threshold; every 25 points halves (more hits) or doubles it. */
+export function sensitivityToConfidence(inst: Instrument, sensitivity: number): number {
+  const threshold = SERVER_THRESHOLDS[inst] * 2 ** ((50 - clamp(sensitivity, 0, 100)) / 25);
+  return clamp(threshold, SERVER_CONFIDENCE_FLOOR, 0.95);
+}
+
+export function detectInBrowser(features: Features, settings: Settings): Detection {
   const { fps } = features;
-  const onsets = {} as PerInstrument<Onset[]>;
-  for (const inst of INSTRUMENTS) {
+  const onsets = perInstrument<Onset[]>(() => []);
+  for (const inst of BAND_INSTRUMENTS) {
     onsets[inst] = pickPeaks(features.odf[inst], fps, sensitivityToDelta(settings.sensitivity[inst]));
   }
-
   const period = settings.bpm ? (60 * fps) / settings.bpm : estimatePeriod(features.combined, fps);
   const beatTimes = trackBeats(features.combined, period).map((frame) => frame / fps);
+  return { onsets, beatTimes, suppressBleed: true };
+}
+
+export function detectionFromServer(result: ServerHits, settings: Settings): Detection {
+  const onsets = perInstrument((inst) => {
+    const min = sensitivityToConfidence(inst, settings.sensitivity[inst]);
+    return (result.hits[inst] ?? []).filter(([, c]) => c >= min).map(([time, strength]) => ({ time, strength }));
+  });
+  let beatTimes = result.beats;
+  let downbeatTimes = result.downbeats;
+  if (settings.beatScale === 2) {
+    beatTimes = beatTimes.flatMap((b, i) => (i + 1 < beatTimes.length ? [b, (b + beatTimes[i + 1]) / 2] : [b]));
+  } else if (settings.beatScale === 0.5) {
+    // Keep the beats that land on downbeats, so bars still start in the right place.
+    const firstDown = downbeatTimes.length ? nearestIndex(beatTimes, downbeatTimes[0]) : 0;
+    beatTimes = beatTimes.filter((_, i) => mod(i - firstDown, 2) === 0);
+    downbeatTimes = downbeatTimes.filter((_, i) => i % 2 === 0);
+  }
+  return { onsets, beatTimes, downbeatTimes, suppressBleed: false };
+}
+
+/** Puts detected hits on a 16th-note grid, slices bars and finds the common pattern. */
+export function arrange(detection: Detection, settings: Settings): Transcription {
+  const { onsets, beatTimes } = detection;
   const stepTimes = subdivide(beatTimes, STEPS_PER_BEAT);
 
-  const steps = {} as PerInstrument<Float32Array>;
-  for (const inst of INSTRUMENTS) steps[inst] = quantize(onsets[inst], stepTimes);
-  suppressLeakage(steps);
+  const steps = perInstrument((inst) => quantize(onsets[inst], stepTimes));
+  if (detection.suppressBleed) suppressLeakage(steps);
 
-  const phase = mod(detectDownbeatPhase(steps, beatTimes.length) + settings.downbeatShift, BEATS_PER_BAR);
+  const autoPhase = detection.downbeatTimes?.length
+    ? phaseFromDownbeats(beatTimes, detection.downbeatTimes)
+    : detectDownbeatPhase(steps, beatTimes.length);
+  const phase = mod(autoPhase + settings.downbeatShift, BEATS_PER_BAR);
   const bars = sliceBars(steps, stepTimes, phase);
   const ibis = beatTimes.slice(1).map((t, i) => t - beatTimes[i]);
-  const bpm = ibis.length ? 60 / median(ibis) : (60 * fps) / period;
 
   return {
-    bpm,
+    bpm: ibis.length ? 60 / median(ibis) : 0,
     beatTimes,
     stepTimes,
     onsets,
@@ -87,6 +145,22 @@ export function transcribe(features: Features, settings: Settings): Transcriptio
     bars,
     consensus: consensusPattern(bars, settings.consensusThreshold),
   };
+}
+
+/** In-browser pipeline end to end. */
+export function transcribe(features: Features, settings: Settings): Transcription {
+  return arrange(detectInBrowser(features, settings), settings);
+}
+
+/** The bar phase most downbeats agree on (4/4 assumed; odd bars are outvoted). */
+function phaseFromDownbeats(beatTimes: number[], downbeatTimes: number[]): number {
+  if (beatTimes.length === 0) return 0;
+  const votes = new Array(BEATS_PER_BAR).fill(0);
+  for (const d of downbeatTimes) {
+    const i = nearestIndex(beatTimes, d);
+    if (Math.abs(beatTimes[i] - d) < 0.07) votes[mod(i, BEATS_PER_BAR)]++;
+  }
+  return votes.indexOf(Math.max(...votes));
 }
 
 function subdivide(beats: number[], div: number): number[] {
