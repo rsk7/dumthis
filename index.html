@@ -21,8 +21,16 @@
       <section id="drop" class="drop">
         <input type="file" id="file" accept="audio/*" hidden />
         <p>Drop an audio file here or <button id="pick" class="link">choose one</button></p>
-        <p id="captureIntro">
-          or <button id="capture" class="link">record another tab</button> (YouTube, SoundCloud, …)
+        <div id="captureIntro">
+          <p>or <button id="capture" class="link">record another tab</button> (YouTube, SoundCloud, …)</p>
+          <p class="small muted">
+            Open the song in another tab first. Chrome will ask what to share: pick that tab under “Chrome Tab” and
+            turn on “Also share tab audio”.
+          </p>
+        </div>
+        <p id="captureUnsupported" class="small muted" hidden>
+          Recording from YouTube or another tab needs desktop Chrome, Edge, Arc or Brave. This browser can’t share a
+          tab’s audio.
         </p>
         <div id="capturePanel" class="capture" hidden>
           <p class="small muted">

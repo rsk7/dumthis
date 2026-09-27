@@ -16,6 +16,7 @@ const els = {
   file: $<HTMLInputElement>('file'),
   pick: $<HTMLButtonElement>('pick'),
   captureIntro: $('captureIntro'),
+  captureUnsupported: $('captureUnsupported'),
   capture: $<HTMLButtonElement>('capture'),
   capturePanel: $('capturePanel'),
   captureTime: $('captureTime'),
@@ -96,7 +97,7 @@ async function loadAudio(name: string, blob: Blob): Promise<void> {
     const buffer = await Tone.getContext().decodeAudioData(await blob.arrayBuffer());
     const mono = toMono(buffer);
     if (peak(mono) < 1e-4) {
-      setStatus(`${name} is silent. If you recorded a tab, make sure it was playing and “Share tab audio” was on.`);
+      setStatus(`${name} is silent. If you recorded a tab, make sure it was playing and “Also share tab audio” was on.`);
       return;
     }
     setStatus('Analyzing…');
@@ -128,7 +129,10 @@ const MIN_CAPTURE_SECONDS = 5;
 const capture = new TabCapture();
 let captureTimer = 0;
 
-if (!TabCapture.isSupported()) els.captureIntro.hidden = true;
+if (!TabCapture.isSupported()) {
+  els.captureIntro.hidden = true;
+  els.captureUnsupported.hidden = false;
+}
 
 els.capture.addEventListener('click', () => void startCapture());
 els.captureStop.addEventListener('click', () => void finishCapture());
@@ -141,7 +145,7 @@ capture.onEnded = () => void finishCapture();
 
 async function startCapture(): Promise<void> {
   engine.stop();
-  setStatus('Pick the tab with the song and turn on “Share tab audio”.');
+  setStatus('In the picker: choose “Chrome Tab”, select the song’s tab, and turn on “Also share tab audio”.');
   try {
     await capture.start();
   } catch (err) {

@@ -23,9 +23,9 @@ Requires Node 20.x (Vite 6 / Vitest 3 are pinned for Node 20.15 compatibility).
 
 ## Recording from YouTube (or any tab)
 
-Click **record another tab**, pick the tab playing the song, and turn on **Share tab audio**. Then play the song and click **Stop & analyze**. Clicking the browser's own "Stop sharing" button also stops and analyzes. 30–60 seconds of steady drums is enough.
+Open the song in another tab and click **record another tab**. In Chrome's share picker, choose the **Chrome Tab** list, select the song's tab, and turn on **Also share tab audio**. Then play the song and click **Stop & analyze**. Clicking the browser's own "Stop sharing" button also stops and analyzes. 30–60 seconds of steady drums is enough.
 
-This uses `getDisplayMedia` + `MediaRecorder`, so it only works in Chrome and Edge on desktop. Firefox and Safari can't share tab audio, so the option is hidden there. Recording happens in real time, and anything else the tab plays (such as ads) ends up in the recording.
+This uses `getDisplayMedia` + `MediaRecorder`, so it only works in desktop Chromium browsers (Chrome, Edge, Arc, Brave). Safari and Firefox only offer to share a screen or window, with no audio, so the page shows a note there instead. Picking a window or screen in Chrome also gives no audio. Recording happens in real time, and anything else the tab plays (such as ads) ends up in the recording.
 
 ## Play & loop
 

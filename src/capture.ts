@@ -1,6 +1,12 @@
+interface UADataLike {
+  brands: { brand: string }[];
+  mobile: boolean;
+}
+
 /**
  * Records the audio of another browser tab (e.g. a YouTube video) via screen sharing.
- * Tab audio sharing is supported in Chromium browsers on desktop only.
+ * Tab audio sharing is supported in Chromium browsers on desktop only. Safari and Firefox
+ * implement getDisplayMedia but only offer screens/windows, with no audio.
  */
 export class TabCapture {
   /** Fires if the user ends sharing from the browser's own "Stop sharing" bar. */
@@ -12,7 +18,14 @@ export class TabCapture {
   private startedAt = 0;
 
   static isSupported(): boolean {
-    return typeof navigator.mediaDevices?.getDisplayMedia === 'function' && typeof MediaRecorder !== 'undefined';
+    // userAgentData only exists in Chromium browsers (Chrome, Edge, Arc, Brave, Opera).
+    const uaData = (navigator as Navigator & { userAgentData?: UADataLike }).userAgentData;
+    const desktopChromium = !!uaData && !uaData.mobile && uaData.brands.some((b) => b.brand === 'Chromium');
+    return (
+      desktopChromium &&
+      typeof navigator.mediaDevices?.getDisplayMedia === 'function' &&
+      typeof MediaRecorder !== 'undefined'
+    );
   }
 
   get recording(): boolean {
@@ -27,7 +40,8 @@ export class TabCapture {
   async start(): Promise<void> {
     const options = {
       // Chrome requires video to be requested to offer tab audio; the video is never used.
-      video: true,
+      // Open Chrome's picker on the tab list rather than screens.
+      video: { displaySurface: 'browser' },
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       preferCurrentTab: false,
       selfBrowserSurface: 'exclude',
@@ -38,8 +52,13 @@ export class TabCapture {
 
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) {
+      const surface = stream.getVideoTracks()[0]?.getSettings().displaySurface;
       stream.getTracks().forEach((t) => t.stop());
-      throw new Error('No audio was shared. Pick a browser tab and turn on “Share tab audio”.');
+      throw new Error(
+        surface && surface !== 'browser'
+          ? 'You shared a window or screen, which can’t include audio. Try again and pick a tab from the “Chrome Tab” list.'
+          : 'No audio was shared. Try again and turn on “Also share tab audio” before clicking Share.',
+      );
     }
 
     this.stream = stream;
